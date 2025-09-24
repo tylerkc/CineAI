@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getPopularMovies, getTrendingMovies, getTopRatedMovies, getNowPlayingMovies, getUpcomingMovies, getMovieDetails } from '../../../lib/tmdb';
 
+// Disable caching for this API route
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 // Fallback movies in case TMDB API fails
 const fallbackMovies = [
   {
@@ -141,10 +145,18 @@ export async function GET() {
           : undefined,
         director: movieDetails.credits?.crew.find(person => person.job === 'Director')?.name || 'Unknown Director',
         cast: movieDetails.credits?.cast.slice(0, 7).map(actor => actor.name) || [],
-        reason: `Why this movie? Because it's trending with a ${movieDetails.vote_average.toFixed(1)}/10 rating and ${movieDetails.vote_count.toLocaleString()} votes.`
+        reason: `Why this movie? Because it's trending with a ${movieDetails.vote_average.toFixed(1)}/10 rating and ${movieDetails.vote_count.toLocaleString()} votes.`,
+        _timestamp: Date.now() // Add timestamp to ensure uniqueness
       };
 
-      return NextResponse.json(formattedMovie);
+      return NextResponse.json(formattedMovie, {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+          'Surrogate-Control': 'no-store'
+        }
+      });
       
     } catch (tmdbError) {
       console.warn('TMDB API failed, using fallback movies:', tmdbError);
@@ -153,7 +165,14 @@ export async function GET() {
       const randomIndex = Math.floor(Math.random() * fallbackMovies.length);
       const fallbackMovie = fallbackMovies[randomIndex];
       
-      return NextResponse.json(fallbackMovie);
+      return NextResponse.json(fallbackMovie, {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+          'Surrogate-Control': 'no-store'
+        }
+      });
     }
     
   } catch (error) {
@@ -171,6 +190,13 @@ export async function GET() {
       director: 'David Fincher',
       cast: ['Brad Pitt', 'Edward Norton', 'Helena Bonham Carter'],
       reason: 'A cult classic that explores themes of consumerism and masculinity.'
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Surrogate-Control': 'no-store'
+      }
     });
   }
 }

@@ -7,15 +7,15 @@ import Sidebar from '../components/Sidebar';
 import InfoPanel from '../components/InfoPanel';
 import SearchBar from '../components/SearchBar';
 import UserProfile from '../components/UserProfile';
-import { 
-  loadMovieData, 
-  addToMyList, 
-  addToWatchedList, 
-  removeFromList, 
-  moveToMyList, 
-  blockMovie, 
+import {
+  loadMovieData,
+  addToMyList,
+  addToWatchedList,
+  removeFromList,
+  moveToMyList,
+  blockMovie,
   reorderMyList,
-  type StoredMovie 
+  type StoredMovie
 } from '../lib/movieStorage';
 
 interface MovieData {
@@ -46,71 +46,129 @@ export default function Home() {
   const [isTransitioning, setIsTransitioning] = useState(false);
 
   const fetchNewMovie = async (maxAttempts = 10, customBlockedMovies?: Set<string>) => {
+    console.log('🎬 fetchNewMovie called');
     try {
       setIsTransitioning(true);
       await new Promise(resolve => setTimeout(resolve, 300));
-      
+
       let attempts = 0;
       let movie = null;
-      
+
+      // Simplified approach - just fetch a movie
       while (attempts < maxAttempts) {
-        const movieResponse = await fetch('/api/random-movie');
+        console.log(`🎬 Attempt ${attempts + 1}/${maxAttempts}: Fetching movie...`);
+
+        const movieResponse = await fetch(`/api/random-movie?t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        });
+
+        if (!movieResponse.ok) {
+          console.warn('❌ API response not ok:', movieResponse.status, movieResponse.statusText);
+          attempts++;
+          continue;
+        }
+
         const fetchedMovie = await movieResponse.json();
-        
-        const currentBlockedMovies = customBlockedMovies || blockedMovies;
+        console.log('✅ Fetched movie:', fetchedMovie.title, 'ID:', fetchedMovie.id);
+
+        // Get current blocked/watched movies
+        const currentStorage = loadMovieData();
+        const currentBlockedMovies = customBlockedMovies || new Set(currentStorage.lists.blockedMovies);
         const excludedIds = new Set([
           ...Array.from(currentBlockedMovies),
-          ...movieLists.myList.map(m => m.id),
-          ...movieLists.watchedList.map(m => m.id)
+          ...currentStorage.lists.myList.map(m => m.id),
+          ...currentStorage.lists.watchedList.map(m => m.id)
         ]);
-        
+
         if (!excludedIds.has(fetchedMovie.id)) {
           movie = fetchedMovie;
+          console.log('✅ Movie is unique, using it!');
           break;
         }
-        
+
         attempts++;
+        console.log(`⚠️ Movie ${fetchedMovie.title} already in lists, trying again...`);
       }
-      
+
+      // If we couldn't find a unique movie, just use any movie
       if (!movie) {
-        const movieResponse = await fetch('/api/random-movie');
-        movie = await movieResponse.json();
+        console.log('⚠️ Could not find unique movie, fetching any movie...');
+        const movieResponse = await fetch(`/api/random-movie?t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        });
+        if (movieResponse.ok) {
+          movie = await movieResponse.json();
+          console.log('✅ Using fallback movie:', movie.title);
+        } else {
+          throw new Error('Failed to fetch any movie');
+        }
       }
-      
+
+      console.log('🎬 Setting new movie:', movie.title);
       setMovieData(movie);
       await new Promise(resolve => setTimeout(resolve, 100));
       setIsTransitioning(false);
+      console.log('✅ Movie transition complete');
     } catch (error) {
-      console.error('Error fetching new movie:', error);
+      console.error('❌ Error fetching new movie:', error);
       setIsTransitioning(false);
+
+      // Set a fallback movie if everything fails
+      const fallbackMovie = {
+        id: 'fallback-' + Date.now(),
+        title: 'The Shawshank Redemption',
+        year: 1994,
+        genre: 'Drama',
+        description: 'Two imprisoned men bond over a number of years, finding solace and eventual redemption through acts of common decency.',
+        rating: 4.7,
+        runtime: '142 min',
+        director: 'Frank Darabont',
+        cast: ['Tim Robbins', 'Morgan Freeman'],
+        reason: 'A timeless classic (fallback movie)'
+      };
+
+      console.log('🆘 Using emergency fallback movie:', fallbackMovie.title);
+      setMovieData(fallbackMovie);
     }
   };
 
   const handleMovieAction = async (action: 'like' | 'dislike' | 'skip' | 'rate' | 'trailer', data: any) => {
+    console.log(`Movie action: ${action} on ${data.title}`);
+
     switch (action) {
       case 'like':
+        console.log('Adding to My List and fetching new movie...');
         const updatedStorage = addToMyList(data);
         setMovieLists({
           myList: updatedStorage.lists.myList,
           watchedList: updatedStorage.lists.watchedList
         });
-        fetchNewMovie();
+        await fetchNewMovie();
         break;
-        
+
       case 'dislike':
+        console.log('Blocking movie and fetching new movie...');
         const blockedStorage = await blockMovie(data.id);
         const newBlockedMovies = new Set(blockedStorage.lists.blockedMovies);
         setBlockedMovies(newBlockedMovies);
-        fetchNewMovie(10, newBlockedMovies);
+        await fetchNewMovie(5, newBlockedMovies);
         break;
-        
+
       case 'skip':
-        fetchNewMovie();
+        console.log('Skipping movie and fetching new movie...');
+        await fetchNewMovie();
         break;
-        
+
       case 'rate':
+        console.log('Rating movie and fetching new movie...');
         const watchedStorage = addToWatchedList({
-          ...data, 
+          ...data,
           rating: data.userRating,
           userRating: data.userRating // Keep both for compatibility
         });
@@ -118,9 +176,9 @@ export default function Home() {
           myList: watchedStorage.lists.myList,
           watchedList: watchedStorage.lists.watchedList
         });
-        fetchNewMovie();
+        await fetchNewMovie();
         break;
-        
+
       case 'trailer':
         handlePlayTrailer(data.id, data.title);
         break;
@@ -131,7 +189,7 @@ export default function Home() {
     try {
       const response = await fetch(`/api/movie-trailer/${movieId}`);
       const data = await response.json();
-      
+
       if (data.hasTrailer && data.trailerUrl) {
         window.open(data.trailerUrl, '_blank', 'noopener,noreferrer');
       } else {
@@ -197,7 +255,7 @@ export default function Home() {
 
     // Update the current movie display
     setMovieData(surpriseMovieData);
-    
+
     console.log(`Surprise Me: Now showing ${selectedMovie.title}`);
   };
 
@@ -213,7 +271,12 @@ export default function Home() {
         });
         setBlockedMovies(new Set(savedData.lists.blockedMovies));
 
-        const movieResponse = await fetch('/api/random-movie');
+        const movieResponse = await fetch(`/api/random-movie?t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        });
         const movie = await movieResponse.json();
         setMovieData(movie);
       } catch (error) {
@@ -252,7 +315,7 @@ export default function Home() {
       <motion.div
         key={movieData.id}
         initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ 
+        animate={{
           opacity: isTransitioning ? 0 : 1,
           scale: isTransitioning ? 0.95 : 1
         }}
@@ -292,10 +355,10 @@ export default function Home() {
           <div className="text-gray-400 text-lg font-light">Loading next movie...</div>
         </motion.div>
       )}
-      
-      <Sidebar 
-        myList={movieLists.myList} 
-        watchedList={movieLists.watchedList} 
+
+      <Sidebar
+        myList={movieLists.myList}
+        watchedList={movieLists.watchedList}
         onUpdateLists={handleUpdateLists}
         onRemoveFromList={handleRemoveFromList}
         onMoveToMyList={handleMoveToMyList}
